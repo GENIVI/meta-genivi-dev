@@ -7,17 +7,18 @@ SRC_URI_append = "\
      file://GDP_Browser_Button.png \
      file://start_am-poc.sh \
      file://start_browser-poc.sh \
-     file://0001-configure.ac-check-for-libsystemd-instead-of-compat-.patch \
-     "
-
-# GDP specific weston.ini
-SRC_URI_append = " \
-    file://weston.ini \
-    "
+     file://weston.ini \
+"
 
 inherit systemd
 DEPENDS_append = " systemd"
 DEPENDS_append_rpi = " ${@bb.utils.contains('PACKAGECONFIG', 'cairo-glesv2', 'virtual/libgles2', '', d)}"
+
+RDEPENDS_${PN}_append_qemux86 = " mesa-megadriver"
+RDEPENDS_${PN}_append_qemux86-64 = " mesa-megadriver"
+RDEPENDS_${PN}_append_vexpressa9 = " mesa-megadriver"
+
+EXTRA_OECONF_append_vexpressa9 = " WESTON_NATIVE_BACKEND=fbdev-backend.so"
 
 EXTRA_OECONF_remove_rpi = "\
 	--enable-rpi-compositor \
@@ -70,6 +71,4 @@ do_install_append() {
     install -m 0644 ${WORKDIR}/weston.ini ${D}${WESTON_INI_CONFIG}/weston.ini
 }
 
-FILES_${PN} += " \
-                ${systemd_unitdir}/system/* \
-               "
+FILES_${PN} += "${systemd_unitdir}/system/*"
