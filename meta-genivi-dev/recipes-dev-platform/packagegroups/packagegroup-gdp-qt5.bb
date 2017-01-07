@@ -17,12 +17,6 @@ ALLOW_EMPTY_${PN} = "1"
 
 RDEPENDS_${PN} += "\
     qtbase \
-    qtbase-fonts \
-    qtbase-fonts-pfa \
-    qtbase-fonts-pfb \
-    qtbase-fonts-qpf \
-    qtbase-fonts-ttf-dejavu \
-    qtbase-fonts-ttf-vera \
     qtbase-plugins \
     qtdeclarative \
     qtdeclarative-plugins \
