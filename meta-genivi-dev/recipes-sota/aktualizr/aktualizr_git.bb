@@ -10,24 +10,29 @@ inherit cmake systemd
 
 S = "${WORKDIR}/git"
 
-SRCREV = "1b7b9d92f432188f7c12ab19d4f736098b199a9f"
-
-FILESEXTRAPATHS_prepend := "${THISDIR}/${PN}:"
+SRCREV = "a6136f091d58b1bb97ec0dd1215eb570fa853f30"
 
 SRC_URI = " \
-          git://github.com/advancedtelematic/aktualizr \
+          git://github.com/advancedtelematic/aktualizr;branch=fix/boost-yocto \
+          file://aktualizr.service \
           "
 
-DEPENDS = "boost curl openssl dbus common-api-c++-dbus dlt-daemon gmock gtest"
-RDEPENDS = ""
+SYSTEMD_PACKAGES = "${PN}"
+SYSTEMD_SERVICE_${PN} = "aktualizr.service"
 
-EXTRA_OECMAKE = "-DCMAKE_BUILD_TYPE=Release -DBUILD_WITH_DBUS_GATEWAY=ON -DSTAGING_DIR_TARGET=${STAGING_DIR_TARGET} -DGMOCK_ROOT=${STAGING_DIR_TARGET}${includedir}/gmock"
+DEPENDS = "boost curl openssl jansson dbus"
+RDEPENDS_aktualizr = "dbus-lib"
+
+EXTRA_OECMAKE = "-DWARNING_AS_ERROR=OFF -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTS=OFF -DBUILD_GENIVI=ON"
 
 do_install() {
-  install -d ${D}${bindir}
-  install -m 0755 ${WORKDIR}/build/target/sota_client ${D}${bindir}/aktualizr
+  install -d ${D}${systemd_unitdir}/system
+  install -m 0644 ${WORKDIR}/aktualizr.service ${D}${systemd_unitdir}/system
 }
 
 FILES_${PN} = " \
               ${bindir}/aktualizr \
+              ${libdir}/libjwt.so.0 \
+              ${libdir}/libjwt.so.0.3.0 \
+              ${systemd_unitdir}/system/aktualizr.service \
               "
