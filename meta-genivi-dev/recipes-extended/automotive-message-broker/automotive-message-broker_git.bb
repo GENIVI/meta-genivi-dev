@@ -34,9 +34,10 @@ do_install_append() {
     install -m 0644 ${WORKDIR}/ambd.service ${D}${systemd_unitdir}/system
     
     install -d ${D}${libdir}/systemd/user/
-    install -m 0644 ${WORKDIR}/ambd_fsa.service ${D}${libdir}/systemd/user/ambd_fsa.service
+    install -m 0644 ${WORKDIR}/ambd_fsa.service ${D}${libdir}/systemd/user/
     mkdir -p ${D}/home/root/.config/systemd/user/default.target.wants
-    ln -sf ${libdir}/systemd/user/ambd_fsa.service ${D}/home/root/.config/systemd/user/default.target.wants/ambd_fsa.service.service
+    ln -sf ${libdir}/systemd/user/ambd_fsa.service \ 
+        ${D}/home/root/.config/systemd/user/default.target.wants/ambd_fsa.service
 
 }
 
