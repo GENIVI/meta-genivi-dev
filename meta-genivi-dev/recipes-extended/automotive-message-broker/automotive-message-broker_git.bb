@@ -17,6 +17,7 @@ SRCREV = "c216955d16ca275159891cad296217094d972390"
 
 SRC_URI += "file://amb_allow_sessionbus.patch \
             file://ambd.service \
+            file://ambd_fsa.service \
             "
 
 EXTRA_OECMAKE += "-Denable_icecc=OFF"
@@ -31,8 +32,13 @@ do_install_append() {
 
     install -d ${D}${systemd_unitdir}/system/
     install -m 0644 ${WORKDIR}/ambd.service ${D}${systemd_unitdir}/system
+
+    install -d ${D}${libdir}/systemd/user/
+    install -m 0644 ${WORKDIR}/ambd_fsa.service ${D}${libdir}/systemd/user
+
 }
 
-FILES_${PN} += "${systemd_unitdir}/ambd.service"
+FILES_${PN} += "${systemd_unitdir}/system/ambd.service"
+FILES_${PN} += "${libdir}/systemd/user/*.service"
 
 INSANE_SKIP_${PN} = "dev-deps"
