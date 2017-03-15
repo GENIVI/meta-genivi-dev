@@ -17,4 +17,5 @@ RDEPENDS_${PN} += "\
     rvi \
     rvi-sota-client \
     genivi-swm \
+    aktualizr \
     "
