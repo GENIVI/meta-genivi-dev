@@ -4,7 +4,7 @@
 LICENSE  = "MPL-2.0"
 LIC_FILES_CHKSUM = "file://LICENSE;md5=9741c346eef56131163e13b9db1241b3"
 SRC_URI = "git://github.com/GENIVI/HVAC"
-SRCREV  = "ac15a42ce45379f7f80d0b5cc5a830a447239238"
+SRCREV  = "b5f215a90d7c32e75de6a5cc621f5bbc9e5617a0"
 
 SUMMARY = "HVAC"
 DEPENDS = "qtbase qtdeclarative dbus"
@@ -32,6 +32,9 @@ do_install_append() {
 
 FILES_${PN} += "\
     /opt/* \
+    ${libdir} \
+    ${libdir}/systemd \
+    ${libdir}/systemd/user \
     ${libdir}/systemd/user/* \
     /usr/share/* \
     "
