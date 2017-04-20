@@ -63,11 +63,7 @@ URI: git://git.openembedded.org/meta-openembedded
 
 URI: git://git.yoctoproject.org/poky
 * branch:   krogoth
-* revision: 12eb72ee3b02f826a156ff4e396c770f2b93571e
-
-URI: git://github.com/jmesmon/meta-rust.git
-* branch: master
-* revision: f13ac9d48ae928b761d7be204fa8f877d41e7099
+* revision: e59717e80f6288410fa057e34233382bd327697a 
 
 URI: git://git.yoctoproject.org/git/meta-oic.git
 * branch: 1.0.1
@@ -84,8 +80,8 @@ URI: git://github.com/joaohf/meta-erlang.git
 ## The Raspberry Pi 2,3 boards depends in addition on: ##
 
 URI: git://git.yoctoproject.org/meta-raspberrypi
-* branch:   master
-* revision: 4c02c7ce07121c2f5367204445f93199d828bb10
+* branch:   krogoth
+* revision: a5f9b07a820d50ae5fb62e07306cd4e72d8638a9 
 
 ## The Renesas R-Car Gen3 M3/H3 Starter Kit boards depend in addition on: ##
 URI: https://github.com/slawr/renesas-rcar-gen3.git
