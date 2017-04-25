@@ -1,5 +1,5 @@
 SUMMARY = "Navigation software based on Navit and compliant with the Navigation APIs standardized by the GENIVI Alliance"
-SRCREV = "5ca0a6e28cf8dfcba41c299cc2b5340c7a0444f3"
+SRCREV = "70e44b6b5df23d8a8708885f1f4f7ce90cb12fae"
 PV = "1"
 
 SRC_URI = "git://github.com/GENIVI/navigation.git;protocol=http \
@@ -32,7 +32,6 @@ do_compile() {
 }
 
 do_install() {
-    #Yocto Post-Processing for generated files.
     sed -i '/libgraphics_null.so/a\\t\t<plugin path="$NAVIT_LIBDIR/*/${NAVIT_LIBPREFIX}libgraphics_opengl.so"/>' ${S}/src/navigation/map-viewer/navit_genivi_mapviewer.xml
 
     install -d ${D}${libdir}/navigation
@@ -43,14 +42,25 @@ do_install() {
     install -m 0755 ${S}/src/poi-service/bin/poi-server ${D}${bindir}
     install -d ${D}${includedir}/navigation-core
     install -m 0755 ${S}/src/navigation/dbus-include/*/*.h ${D}${includedir}/navigation-core
-    install -m 0755 ${S}/src/poi-service/resource/poi-database-sample.db ${D}${datadir}/navigation-service
 
-    #Install switzerland map
+    install -m 0755 ${S}/src/poi-service/resource/empty.db ${D}${datadir}/navigation-service
+
     install -d 0755 ${D}${datadir}/navit/maps
     cp ${S}/src/navigation/map/switzerland.bin ${D}${datadir}/navit/maps
+
+    install -d ${D}${libdir}/systemd/user/
+    install -m 0644 ${S}/src/navigation/map-viewer/navit_genivi_mapviewer_fsa.service ${D}${libdir}/systemd/user
+
+    install -d ${D}${libdir}/systemd/user/
+    install -m 0644 ${S}/src/navigation/navigation-core/navit_genivi_navigationcore_fsa.service ${D}${libdir}/systemd/user
+
+    install -d ${D}${libdir}/systemd/user/
+    install -m 0644 ${S}/src/poi-service/poi-server/poi-server.service ${D}/${libdir}/systemd/user
 
 }
 
 FILES_${PN} += "${libdir}/navigation"
 FILES_${PN} += "${datadir}/navit/maps"
+FILES_${PN} += "${libdir}/systemd/user/*.service \
+                /home/root/.config/systemd/user/default.target.wants/*.service"
 FILES_${PN}-dbg += "${libdir}/navigation/.debug/"
