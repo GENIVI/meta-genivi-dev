@@ -35,8 +35,8 @@ LICENSE_${PN}-repl = "MPLv2"
 LICENSE_${PN}-enhpos = "MPLv2"
 
 SRC_URI = "git://github.com/GENIVI/positioning.git;protocol=http"
-SRCREV = "53b518d5eb8559c1c78150639a5f000453108cec"
-LIC_FILES_CHKSUM = "file://LICENSE;md5=e73ca6874051c79a99d065bc57849af5"
+SRCREV = "9725fe1f553197042d6445997690d452a73490c0"
+LIC_FILES_CHKSUM = "file://LICENSE;md5=a69d925435ff0d251d16ac2eb350005a"
 
 S = "${WORKDIR}/git"
 
@@ -86,6 +86,9 @@ do_install() {
     install -m 755 ${S}/enhanced-position-service/*/test/enhanced-position-client ${D}/${bindir}
     install -m 755 ${S}/enhanced-position-service/*/api/*.xml ${D}${datadir}/${PN}
     install -m 755 ${S}/enhanced-position-service/dbus/api/*.h ${D}${includedir}/${PN}
+
+     install -d ${D}${libdir}/systemd/user
+     install -m 0644 ${S}/enhanced-position-service/dbus/src/enhanced-position-service.service ${D}${libdir}/systemd/user
 }
 
 FILES_${PN}-gnss = "${libdir}/libgnss-service*.so "
@@ -99,7 +102,10 @@ FILES_${PN}-repl = "${bindir}/log-replayer \
                     ${datadir}/${PN}/*.log "
 FILES_${PN}-repl-test = "${bindir}/test-log-replayer "
 
-FILES_${PN}-enhpos = "${bindir}/enhanced-position-service "
+FILES_${PN}-enhpos = "${bindir}/enhanced-position-service \
+                      ${libdir}/systemd/user/*.service \
+                      /home/root/.config/systemd/user/default.target.wants/*.service"
+
 FILES_${PN}-enhpos-test = "${bindir}/enhanced-position-client \
                            ${bindir}/enhanced-position-service-compliance-test "
 
