@@ -1,7 +1,7 @@
 DESCRIPTION = "Genivi Software Loading Manager"
 SECTION = "base"
 LICENSE = "MPL-2.0"
-LIC_FILES_CHKSUM = "file://${S}/LICENSE;md5=8d2127b230519ce4ad2c16070bdeb7b3"
+LIC_FILES_CHKSUM = "file://${S}/LICENSE;md5=b278a92d2c1509760384428817710378"
 
 SRCREV = "1ccca6c731da1e26752fbf2d2cdef18fe7e7fbb3"
 SRC_URI = "\
@@ -49,12 +49,12 @@ do_install () {
     cp -r ${S}/* ${D}${libdir}/${PN}
 
     install -d ${D}${systemd_system_unitdir}
-    install -c "${WORKDIR}/package_manager.service" ${D}${systemd_system_unitdir}
-    install -c "${WORKDIR}/partition_manager.service" ${D}${systemd_system_unitdir}
-    install -c "${WORKDIR}/module_loader_ecu1.service" ${D}${systemd_system_unitdir}
-    install -c "${WORKDIR}/software_loading_manager.service" ${D}${systemd_system_unitdir}
-    install -c "${WORKDIR}/lifecycle_manager.service" ${D}${systemd_system_unitdir}
+    install -m 0644 -c "${WORKDIR}/package_manager.service" ${D}${systemd_system_unitdir}
+    install -m 0644 -c "${WORKDIR}/partition_manager.service" ${D}${systemd_system_unitdir}
+    install -m 0644 -c "${WORKDIR}/module_loader_ecu1.service" ${D}${systemd_system_unitdir}
+    install -m 0644 -c "${WORKDIR}/software_loading_manager.service" ${D}${systemd_system_unitdir}
+    install -m 0644 -c "${WORKDIR}/lifecycle_manager.service" ${D}${systemd_system_unitdir}
 
     install -d ${D}${sysconfdir}/dbus-1/system.d/
-    install -c "${WORKDIR}/org.genivi.SoftwareLoadingManager.conf" ${D}${sysconfdir}/dbus-1/system.d
+    install -m 0644 -c "${WORKDIR}/org.genivi.SoftwareLoadingManager.conf" ${D}${sysconfdir}/dbus-1/system.d
 }
