@@ -1,0 +1,10 @@
+[Unit]
+Description=FSA data simulation broadcast through Automotive Message Broker User Service
+Requires=dbus.service
+After=dbus.service
+
+[Service]
+ExecStart=/usr/bin/ambd --config /etc/ambd/logreplayerconfig.in.json
+
+[Install]
+WantedBy=default.target

@@ -64,11 +64,6 @@ FILES_${PN}-graphics-qt = " ${libdir}/${PN}/graphics/libgraphics_qt_qpainter.so 
 FILES_${PN}-graphics-gtk = " ${libdir}/${PN}/graphics/libgraphics_gtk_drawing_area.so "
 FILES_${PN}-icons = "/usr/share/${PN}/xpm/"
 
-do_configure_prepend() {
-    # MOC=`$PKG_CONFIG QtGui --variable=moc_location` returns only /usr/bin/moc4 which is not available on hosts without Qt
-    sed -i "s#MOC=#MOC=${STAGING_DIR_NATIVE}#g" ${S}/configure.in
-}
-
 EXTRA_OECMAKE = "-DSAMPLE_MAP=n -DDISABLE_QT=1 -Dvehicle/null=1 -Dgraphics/qt_qpainter=0"
 
 do_install() {
@@ -104,7 +99,7 @@ do_install() {
     install ${PN}/vehicle/null/.libs/libvehicle_null.so ${D}/${libdir}/${PN}/vehicle
 
     install -d ${D}${includedir}/${PN}
-    install -m 0755 ${B}/config.h ${D}${includedir}/${PN}
+    install -m 0755 ${B}/config.h ${D}${includedir}
     install -m 0755 ${S}/${PN}/*.h ${D}${includedir}/${PN}
 
     install -d ${D}${libdir}/${PN}/cmake
