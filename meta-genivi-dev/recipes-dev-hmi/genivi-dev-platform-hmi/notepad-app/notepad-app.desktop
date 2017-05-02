@@ -1,0 +1,5 @@
+[Desktop Entry]
+Exec=/opt/com.genivi.gdp.notepad/bin/Notepad -platform wayland
+Icon=file://opt/com.genivi.gdp.notepad/notepad.svg
+Name=Notepad
+Type=Application
