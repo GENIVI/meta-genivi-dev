@@ -1,0 +1,4 @@
+[Desktop Entry]
+Exec=/opt/com.genivi.gdp.notepad/bin/Notepad -platform wayland
+Name=Notepad
+Type=Application
