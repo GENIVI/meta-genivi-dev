@@ -1,0 +1,10 @@
+[Unit]
+Description=Automotive Message Broker for FSA configuration file
+Requires=dbus.service
+After=dbus.service
+
+[Service]
+ExecStart=/usr/bin/ambd --config  /etc/ambd/logreplayerconfig.in.json
+
+[Install]
+WantedBy=default.target
