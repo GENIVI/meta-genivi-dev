@@ -1,0 +1,1523 @@
+From 0247f491bf3aa1bc6c8bdc8a78e9f8e8ca9a5c75 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Jacobo=20Aragunde=20P=C3=A9rez?= <jaragunde@igalia.com>
+Date: Wed, 12 Apr 2017 17:53:06 +0200
+Subject: [PATCH] Multi-seat implementation.
+
+---
+ ozone/ozone_impl.gyp                     |   2 +
+ ozone/platform/messages.h                |  39 +++++++++----
+ ozone/platform/ozone_wayland_seat.cc     |  29 ++++++++++
+ ozone/platform/ozone_wayland_seat.h      |  25 ++++++++
+ ozone/platform/ozone_wayland_window.cc   |  12 +++-
+ ozone/platform/ozone_wayland_window.h    |   8 +++
+ ozone/platform/window_constants.h        |  10 ++++
+ ozone/platform/window_manager_wayland.cc | 114 ++++++++++++++++++++++++++-----------
+ ozone/platform/window_manager_wayland.h  |  49 ++++++++++------
+ ozone/wayland/display.cc                 |  37 +++++++++---
+ ozone/wayland/display.h                  |  17 ++++--
+ ozone/wayland/input/keyboard.cc          |  29 ++++++++++
+ ozone/wayland/input/keyboard.h           |   3 +
+ ozone/wayland/input/pointer.cc           |  26 ++++++---
+ ozone/wayland/input/pointer.h            |   4 ++
+ ozone/wayland/input/touchscreen.cc       |  36 +++++++++---
+ ozone/wayland/input/touchscreen.h        |   4 ++
+ ozone/wayland/seat.cc                    |  23 +++++++-
+ ozone/wayland/seat.h                     |   7 +++
+ ozone/wayland/shell/ivi_shell_surface.cc |  38 +++++++++++++
+ ozone/wayland/shell/ivi_shell_surface.h  |   2 +
+ ozone/wayland/shell/shell_surface.h      |   1 +
+ ozone/wayland/shell/wl_shell_surface.cc  |   4 ++
+ ozone/wayland/shell/wl_shell_surface.h   |   1 +
+ ozone/wayland/shell/xdg_shell_surface.cc |   4 ++
+ ozone/wayland/shell/xdg_shell_surface.h  |   1 +
+ ozone/wayland/wayland.gyp                |   1 +
+ 27 files changed, 436 insertions(+), 90 deletions(-)
+ create mode 100644 ozone/platform/ozone_wayland_seat.cc
+ create mode 100644 ozone/platform/ozone_wayland_seat.h
+
+Index: chromium-53.0.2785.143/ozone/ozone_impl.gyp
+===================================================================
+--- chromium-53.0.2785.143.orig/ozone/ozone_impl.gyp
++++ chromium-53.0.2785.143/ozone/ozone_impl.gyp
+@@ -40,6 +40,8 @@
+ 	'platform/ozone_gpu_platform_support_host.cc',
+         'platform/ozone_platform_wayland.cc',
+         'platform/ozone_platform_wayland.h',
++        'platform/ozone_wayland_seat.cc',
++        'platform/ozone_wayland_seat.h',
+         'platform/ozone_wayland_window.cc',
+         'platform/ozone_wayland_window.h',
+ 	'platform/window_constants.h',
+Index: chromium-53.0.2785.143/ozone/platform/messages.h
+===================================================================
+--- chromium-53.0.2785.143.orig/ozone/platform/messages.h
++++ chromium-53.0.2785.143/ozone/platform/messages.h
+@@ -33,6 +33,11 @@ IPC_ENUM_TRAITS_MAX_VALUE(ui::WidgetStat
+ IPC_ENUM_TRAITS_MAX_VALUE(ui::WidgetType,
+                           ui::TOOLTIP)
+ 
++IPC_STRUCT_TRAITS_BEGIN(ui::PointerPosition)
++  IPC_STRUCT_TRAITS_MEMBER(x)
++  IPC_STRUCT_TRAITS_MEMBER(y)
++IPC_STRUCT_TRAITS_END()
++
+ //------------------------------------------------------------------------------
+ // Browser Messages
+ // These messages are from the GPU to the browser process.
+@@ -53,28 +58,28 @@ IPC_MESSAGE_CONTROL3(  // NOLINT(readabi
+     int /*device_id*/)
+ 
+ IPC_MESSAGE_CONTROL2(WaylandInput_MotionNotify,  // NOLINT(readability/fn_size)
+-                     float /*x*/,
+-                     float /*y*/)
++                     ui::PointerPosition /*x, y*/,
++                     int /*device_id*/)
+ 
+ IPC_MESSAGE_CONTROL5(WaylandInput_ButtonNotify,  // NOLINT(readability/fn_size)
+                      unsigned /*handle*/,
+                      ui::EventType /*type*/,
+                      ui::EventFlags /*flags*/,
+-                     float /*x*/,
+-                     float /*y*/)
++                     ui::PointerPosition /*x, y*/,
++                     int /*device_id*/)
+ 
+ IPC_MESSAGE_CONTROL5(WaylandInput_TouchNotify,  // NOLINT(readability/fn_size)
+                      ui::EventType /*type*/,
+-                     float /*x*/,
+-                     float /*y*/,
++                     ui::PointerPosition,
+                      int32_t /*touch_id*/,
+-                     uint32_t /*time_stamp*/)
++                     uint32_t /*time_stamp*/,
++                     int /*device_id*/)
+ 
+ IPC_MESSAGE_CONTROL4(WaylandInput_AxisNotify,  // NOLINT(readability/fn_size)
+-                     float /*x*/,
+-                     float /*y*/,
++                     ui::PointerPosition /*x, y*/,
+                      int /*x_offset*/,
+-                     int /*y_offset*/)
++                     int /*y_offset*/,
++                     int /*device_id*/)
+ 
+ IPC_MESSAGE_CONTROL3(WaylandInput_PointerEnter,  // NOLINT(readability/fn_size)
+                      unsigned /*handle*/,
+@@ -142,6 +147,20 @@ IPC_MESSAGE_CONTROL4(WaylandInput_DragMo
+ IPC_MESSAGE_CONTROL1(WaylandInput_DragDrop,  // NOLINT(readability/fn_size)
+                      unsigned /* window handle */)
+ 
++IPC_MESSAGE_CONTROL2(WaylandInput_SeatCreated,  // NOLINT(readability/fn_size)
++                     std::string /* seat_name */,
++                     std::vector<uint32_t> /* device_ids */)
++
++IPC_MESSAGE_CONTROL2(WaylandInput_SeatAssignmentChanged,  // NOLINT(readability/fn_size)
++                     std::string /* seat_name */,
++                     unsigned /* window handle */)
++
++IPC_MESSAGE_CONTROL1(WaylandInput_KeyboardEnter,  // NOLINT(readability/fn_size)
++                     unsigned /*handle*/)
++
++IPC_MESSAGE_CONTROL1(WaylandInput_KeyboardLeave,  // NOLINT(readability/fn_size)
++                     unsigned /*handle*/)
++
+ //------------------------------------------------------------------------------
+ // GPU Messages
+ // These messages are from the Browser to the GPU process.
+Index: chromium-53.0.2785.143/ozone/platform/ozone_wayland_seat.cc
+===================================================================
+--- /dev/null
++++ chromium-53.0.2785.143/ozone/platform/ozone_wayland_seat.cc
+@@ -0,0 +1,29 @@
++// Copyright 2017 GENIVI Alliance. All rights reserved.
++// Copyright 2017 Igalia, S.L. All rights reserved.
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#include "ozone/platform/ozone_wayland_seat.h"
++
++#include "base/logging.h"
++
++namespace ui {
++
++OzoneWaylandSeat::OzoneWaylandSeat(const std::string name,
++                                   std::vector<uint32_t> device_ids)
++    : name_(name),
++      device_ids_(device_ids) {
++}
++
++OzoneWaylandSeat::~OzoneWaylandSeat() {
++}
++
++bool OzoneWaylandSeat::ContainsDevice(uint32_t device_id) {
++  std::vector<uint32_t>::const_iterator i;
++  for(i=device_ids_.begin(); i!=device_ids_.end(); ++i) {
++    if (*i == device_id)
++      return true;
++  }
++  return false;
++}
++}  // namespace ui
+Index: chromium-53.0.2785.143/ozone/platform/ozone_wayland_seat.h
+===================================================================
+--- /dev/null
++++ chromium-53.0.2785.143/ozone/platform/ozone_wayland_seat.h
+@@ -0,0 +1,25 @@
++// Copyright 2017 GENIVI Alliance. All rights reserved.
++// Copyright 2017 Igalia, S.L. All rights reserved.
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++#include <string>
++#include <vector>
++
++namespace ui {
++
++class OzoneWaylandSeat {
++ public:
++  OzoneWaylandSeat(const std::string name,
++		   std::vector<uint32_t> device_ids);
++
++  ~OzoneWaylandSeat();
++
++  bool ContainsDevice(uint32_t device_id);
++
++ private:
++  const std::string name_;
++  std::vector<uint32_t> device_ids_;
++};
++
++}  // namespace ui
+Index: chromium-53.0.2785.143/ozone/platform/ozone_wayland_window.cc
+===================================================================
+--- chromium-53.0.2785.143.orig/ozone/platform/ozone_wayland_window.cc
++++ chromium-53.0.2785.143/ozone/platform/ozone_wayland_window.cc
+@@ -8,6 +8,7 @@
+ #include "base/bind.h"
+ #include "ozone/platform/messages.h"
+ #include "ozone/platform/ozone_gpu_platform_support_host.h"
++#include "ozone/platform/ozone_wayland_seat.h"
+ #include "ozone/platform/window_manager_wayland.h"
+ #include "ui/base/cursor/ozone/bitmap_cursor_factory_ozone.h"
+ #include "ui/events/ozone/events_ozone.h"
+@@ -30,7 +31,9 @@ OzoneWaylandWindow::OzoneWaylandWindow(P
+       parent_(0),
+       state_(UNINITIALIZED),
+       region_(NULL),
+-      cursor_type_(-1) {
++      cursor_type_(-1),
++      keyboard_focus_(false),
++      pointer_focus_(false) {
+   static int opaque_handle = 0;
+   opaque_handle++;
+   handle_ = opaque_handle;
+@@ -229,7 +232,12 @@ void OzoneWaylandWindow::ConfineCursorTo
+ // WindowTreeHostDelegateWayland, ui::PlatformEventDispatcher implementation:
+ bool OzoneWaylandWindow::CanDispatchEvent(
+     const ui::PlatformEvent& ne) {
+-  return window_manager_->event_grabber() == handle_;
++  Event* event = static_cast<Event*>(ne);
++  if ((event->IsMouseEvent() || event->IsTouchEvent()) && assigned_seat_)
++    return assigned_seat_->ContainsDevice(event->source_device_id());
++  if (event->IsKeyEvent() && assigned_seat_)
++    return keyboard_focus_ && assigned_seat_->ContainsDevice(event->source_device_id());
++  return false;
+ }
+ 
+ uint32_t OzoneWaylandWindow::DispatchEvent(
+Index: chromium-53.0.2785.143/ozone/platform/ozone_wayland_window.h
+===================================================================
+--- chromium-53.0.2785.143.orig/ozone/platform/ozone_wayland_window.h
++++ chromium-53.0.2785.143/ozone/platform/ozone_wayland_window.h
+@@ -19,6 +19,7 @@ namespace ui {
+ 
+ class BitmapCursorOzone;
+ class OzoneGpuPlatformSupportHost;
++class OzoneWaylandSeat;
+ class PlatformWindowDelegate;
+ class WindowManagerWayland;
+ 
+@@ -70,6 +71,10 @@ class OzoneWaylandWindow : public Platfo
+   void OnGpuThreadReady() override;
+   void OnGpuThreadRetired() override;
+ 
++  void SetAssignedSeat(OzoneWaylandSeat* seat) { assigned_seat_ = seat; }
++  void SetKeyboardFocus(bool focus) { keyboard_focus_ = focus; }
++  void SetPointerFocus(bool focus) { pointer_focus_ = focus; }
++
+  private:
+   void SendWidgetState();
+   void AddRegion();
+@@ -78,6 +83,7 @@ class OzoneWaylandWindow : public Platfo
+   void ValidateBounds();
+   PlatformWindowDelegate* delegate_;   // Not owned.
+   OzoneGpuPlatformSupportHost* sender_;  // Not owned.
++  OzoneWaylandSeat* assigned_seat_;  // Not owned.
+   WindowManagerWayland* window_manager_;  // Not owned.
+   bool transparent_;
+   gfx::Rect bounds_;
+@@ -90,6 +96,8 @@ class OzoneWaylandWindow : public Platfo
+   base::string16 title_;
+   // The current cursor bitmap (immutable).
+   scoped_refptr<BitmapCursorOzone> bitmap_;
++  bool keyboard_focus_;
++  bool pointer_focus_;
+ 
+   DISALLOW_COPY_AND_ASSIGN(OzoneWaylandWindow);
+ };
+Index: chromium-53.0.2785.143/ozone/platform/window_constants.h
+===================================================================
+--- chromium-53.0.2785.143.orig/ozone/platform/window_constants.h
++++ chromium-53.0.2785.143/ozone/platform/window_constants.h
+@@ -29,6 +29,16 @@ namespace ui {
+       // (i.e. Wayland install the grab) by the Window.
+     TOOLTIP = 4
+   };
++struct PointerPosition {
++  PointerPosition(float x, float y)
++  : x(x), y(y) {}
++
++  PointerPosition()
++  : x(0), y(0) {}
++
++  float x;
++  float y;
++};
+ 
+ }  // namespace ui
+ 
+Index: chromium-53.0.2785.143/ozone/platform/window_manager_wayland.cc
+===================================================================
+--- chromium-53.0.2785.143.orig/ozone/platform/window_manager_wayland.cc
++++ chromium-53.0.2785.143/ozone/platform/window_manager_wayland.cc
+@@ -13,6 +13,7 @@
+ #include "ozone/platform/messages.h"
+ #include "ozone/platform/ozone_gpu_platform_support_host.h"
+ #include "ozone/platform/ozone_wayland_window.h"
++#include "ozone/platform/ozone_wayland_seat.h"
+ #include "ozone/wayland/ozone_wayland_screen.h"
+ #include "ui/aura/window.h"
+ #include "ui/events/event_utils.h"
+@@ -24,6 +25,7 @@ namespace ui {
+ 
+ WindowManagerWayland::WindowManagerWayland(OzoneGpuPlatformSupportHost* proxy)
+     : open_windows_(NULL),
++      seats_(),
+       active_window_(NULL),
+       proxy_(proxy),
+       keyboard_(&modifiers_,
+@@ -36,6 +38,10 @@ WindowManagerWayland::WindowManagerWayla
+ }
+ 
+ WindowManagerWayland::~WindowManagerWayland() {
++  if (!seats_.empty()) {
++    STLDeleteValues(&seats_);
++    seats_.clear();
++  }
+ }
+ 
+ void WindowManagerWayland::OnRootWindowCreated(
+@@ -55,9 +61,6 @@ void WindowManagerWayland::OnRootWindowC
+   if (active_window_ == window)
+      active_window_ = NULL;
+ 
+-  if (event_grabber_ == window->GetHandle())
+-    event_grabber_ = gfx::kNullAcceleratedWidget;
+-
+   if (current_capture_ == window->GetHandle()) {
+      OzoneWaylandWindow* window = GetWindow(current_capture_);
+      window->GetDelegate()->OnLostCapture();
+@@ -72,7 +75,6 @@ void WindowManagerWayland::OnRootWindowC
+ 
+ void WindowManagerWayland::Restore(OzoneWaylandWindow* window) {
+   active_window_ = window;
+-  event_grabber_  = window->GetHandle();
+ }
+ 
+ void WindowManagerWayland::OnPlatformScreenCreated(
+@@ -103,7 +105,6 @@ void WindowManagerWayland::GrabEvents(gf
+   }
+ 
+   current_capture_ = widget;
+-  event_grabber_ = widget;
+ }
+ 
+ void WindowManagerWayland::UngrabEvents(gfx::AcceleratedWidget widget) {
+@@ -111,7 +112,6 @@ void WindowManagerWayland::UngrabEvents(
+     return;
+ 
+   current_capture_ = gfx::kNullAcceleratedWidget;
+-  event_grabber_ = active_window_ ? active_window_->GetHandle() : 0;
+ }
+ 
+ OzoneWaylandWindow*
+@@ -143,22 +143,16 @@ void WindowManagerWayland::OnActivationC
+     if (active_window_ && active_window_ == window)
+         return;
+ 
+-    if (current_capture_) {
+-      event_grabber_ = windowhandle;
++    if (current_capture_)
+       return;
+-    }
+ 
+     if (active_window_)
+       active_window_->GetDelegate()->OnActivationChanged(false);
+ 
+-    event_grabber_ = windowhandle;
+     active_window_ = window;
+     active_window_->GetDelegate()->OnActivationChanged(active);
+   } else if (active_window_ == window) {
+       active_window_->GetDelegate()->OnActivationChanged(active);
+-      if (event_grabber_ == active_window_->GetHandle())
+-         event_grabber_ = gfx::kNullAcceleratedWidget;
+-
+       active_window_ = NULL;
+   }
+ }
+@@ -262,38 +256,42 @@ bool WindowManagerWayland::OnMessageRece
+   IPC_MESSAGE_HANDLER(WaylandInput_DragLeave, DragLeave)
+   IPC_MESSAGE_HANDLER(WaylandInput_DragMotion, DragMotion)
+   IPC_MESSAGE_HANDLER(WaylandInput_DragDrop, DragDrop)
++  IPC_MESSAGE_HANDLER(WaylandInput_SeatCreated, SeatCreated)
++  IPC_MESSAGE_HANDLER(WaylandInput_SeatAssignmentChanged, SeatAssignmentChanged)
++  IPC_MESSAGE_HANDLER(WaylandInput_KeyboardEnter, KeyboardEnter)
++  IPC_MESSAGE_HANDLER(WaylandInput_KeyboardLeave, KeyboardLeave)
+   IPC_MESSAGE_UNHANDLED(handled = false)
+   IPC_END_MESSAGE_MAP()
+ 
+   return handled;
+ }
+ 
+-void WindowManagerWayland::MotionNotify(float x, float y) {
++void WindowManagerWayland::MotionNotify(ui::PointerPosition position, int device_id) {
+   base::ThreadTaskRunnerHandle::Get()->PostTask(
+       FROM_HERE,
+       base::Bind(&WindowManagerWayland::NotifyMotion,
+-          weak_ptr_factory_.GetWeakPtr(), x, y));
++          weak_ptr_factory_.GetWeakPtr(), position.x, position.y, device_id));
+ }
+ 
+ void WindowManagerWayland::ButtonNotify(unsigned handle,
+                                         EventType type,
+                                         EventFlags flags,
+-                                        float x,
+-                                        float y) {
++                                        ui::PointerPosition position,
++                                        int device_id) {
+   base::ThreadTaskRunnerHandle::Get()->PostTask(
+       FROM_HERE,
+       base::Bind(&WindowManagerWayland::NotifyButtonPress,
+-          weak_ptr_factory_.GetWeakPtr(), handle, type, flags, x, y));
++          weak_ptr_factory_.GetWeakPtr(), handle, type, flags, position.x, position.y, device_id));
+ }
+ 
+-void WindowManagerWayland::AxisNotify(float x,
+-                                      float y,
++void WindowManagerWayland::AxisNotify(ui::PointerPosition position,
+                                       int xoffset,
+-                                      int yoffset) {
++                                      int yoffset,
++                                      int device_id) {
+   base::ThreadTaskRunnerHandle::Get()->PostTask(
+       FROM_HERE,
+       base::Bind(&WindowManagerWayland::NotifyAxis,
+-          weak_ptr_factory_.GetWeakPtr(), x, y, xoffset, yoffset));
++          weak_ptr_factory_.GetWeakPtr(), position.x, position.y, xoffset, yoffset, device_id));
+ }
+ 
+ void WindowManagerWayland::PointerEnter(unsigned handle,
+@@ -314,6 +312,20 @@ void WindowManagerWayland::PointerLeave(
+           weak_ptr_factory_.GetWeakPtr(), handle, x, y));
+ }
+ 
++void WindowManagerWayland::KeyboardEnter(unsigned handle) {
++  base::ThreadTaskRunnerHandle::Get()->PostTask(
++      FROM_HERE,
++      base::Bind(&WindowManagerWayland::NotifyKeyboardEnter,
++          weak_ptr_factory_.GetWeakPtr(), handle));
++}
++
++void WindowManagerWayland::KeyboardLeave(unsigned handle) {
++  base::ThreadTaskRunnerHandle::Get()->PostTask(
++      FROM_HERE,
++      base::Bind(&WindowManagerWayland::NotifyKeyboardLeave,
++          weak_ptr_factory_.GetWeakPtr(), handle));
++}
++
+ void WindowManagerWayland::KeyNotify(EventType type,
+                                      unsigned code,
+                                      int device_id) {
+@@ -331,14 +343,14 @@ void WindowManagerWayland::VirtualKeyNot
+ }
+ 
+ void WindowManagerWayland::TouchNotify(EventType type,
+-                                       float x,
+-                                       float y,
++                                       ui::PointerPosition position,
+                                        int32_t touch_id,
+-                                       uint32_t time_stamp) {
++                                       uint32_t time_stamp,
++                                       int device_id) {
+   base::ThreadTaskRunnerHandle::Get()->PostTask(
+       FROM_HERE,
+       base::Bind(&WindowManagerWayland::NotifyTouchEvent,
+-          weak_ptr_factory_.GetWeakPtr(), type, x, y, touch_id, time_stamp));
++          weak_ptr_factory_.GetWeakPtr(), type, position.x, position.y, touch_id, time_stamp, device_id));
+ }
+ 
+ void WindowManagerWayland::CloseWidget(unsigned handle) {
+@@ -433,6 +445,20 @@ void WindowManagerWayland::DragDrop(unsi
+           weak_ptr_factory_.GetWeakPtr(), windowhandle));
+ }
+ 
++void WindowManagerWayland::SeatCreated(const std::string name,
++                                       std::vector<uint32_t> device_ids) {
++  OzoneWaylandSeat* seat = new OzoneWaylandSeat(name, device_ids);
++  seats_[name] = seat;
++}
++
++void WindowManagerWayland::SeatAssignmentChanged(const std::string seat_name,
++                                                 unsigned windowhandle) {
++  OzoneWaylandWindow* window = GetWindow(windowhandle);
++  OzoneWaylandSeat* seat = seats_[seat_name];
++  if (seat && window)
++    window->SetAssignedSeat(seat);
++}
++
+ void WindowManagerWayland::InitializeXKB(base::SharedMemoryHandle fd,
+                                          uint32_t size) {
+   char* map_str =
+@@ -466,7 +492,8 @@ void WindowManagerWayland::OnDispatcherL
+ 
+ ////////////////////////////////////////////////////////////////////////////////
+ void WindowManagerWayland::NotifyMotion(float x,
+-                                        float y) {
++                                        float y,
++                                        int device_id) {
+   gfx::Point position(x, y);
+   MouseEvent mouseev(ET_MOUSE_MOVED,
+                          position,
+@@ -474,6 +501,7 @@ void WindowManagerWayland::NotifyMotion(
+                          EventTimeForNow(),
+                          0,
+                          0);
++  mouseev.set_source_device_id(device_id);
+   DispatchEvent(&mouseev);
+ }
+ 
+@@ -481,7 +509,8 @@ void WindowManagerWayland::NotifyButtonP
+                                              EventType type,
+                                              EventFlags flags,
+                                              float x,
+-                                             float y) {
++                                             float y,
++                                             int device_id) {
+   gfx::Point position(x, y);
+   MouseEvent mouseev(type,
+                          position,
+@@ -489,6 +518,7 @@ void WindowManagerWayland::NotifyButtonP
+                          EventTimeForNow(),
+                          flags,
+                          flags);
++  mouseev.set_source_device_id(device_id);
+ 
+   DispatchEvent(&mouseev);
+ 
+@@ -497,9 +527,10 @@ void WindowManagerWayland::NotifyButtonP
+ }
+ 
+ void WindowManagerWayland::NotifyAxis(float x,
+-                                         float y,
+-                                         int xoffset,
+-                                         int yoffset) {
++                                      float y,
++                                      int xoffset,
++                                      int yoffset,
++                                      int device_id) {
+   gfx::Point position(x, y);
+   MouseEvent mouseev(ET_MOUSEWHEEL,
+                          position,
+@@ -507,16 +538,30 @@ void WindowManagerWayland::NotifyAxis(fl
+                          EventTimeForNow(),
+                          0,
+                          0);
++  mouseev.set_source_device_id(device_id);
+ 
+   MouseWheelEvent wheelev(mouseev, xoffset, yoffset);
+ 
+   DispatchEvent(&wheelev);
+ }
+ 
++void WindowManagerWayland::NotifyKeyboardEnter(unsigned handle) {
++  OzoneWaylandWindow* window = GetWindow(handle);
++  window->SetKeyboardFocus(true);
++}
++
++void WindowManagerWayland::NotifyKeyboardLeave(unsigned handle) {
++  OzoneWaylandWindow* window = GetWindow(handle);
++  window->SetKeyboardFocus(false);
++}
++
+ void WindowManagerWayland::NotifyPointerEnter(unsigned handle,
+                                                  float x,
+                                                  float y) {
+   OnWindowEnter(handle);
++  OzoneWaylandWindow* window = GetWindow(handle);
++  if (window)
++    window->SetPointerFocus(true);
+ 
+   gfx::Point position(x, y);
+   MouseEvent mouseev(ET_MOUSE_ENTERED,
+@@ -533,6 +578,9 @@ void WindowManagerWayland::NotifyPointer
+                                               float x,
+                                               float y) {
+   OnWindowLeave(handle);
++  OzoneWaylandWindow* window = GetWindow(handle);
++  if (window)
++    window->SetPointerFocus(false);
+ 
+   gfx::Point position(x, y);
+   MouseEvent mouseev(ET_MOUSE_EXITED,
+@@ -549,11 +597,13 @@ void WindowManagerWayland::NotifyTouchEv
+                                             float x,
+                                             float y,
+                                             int32_t touch_id,
+-                                            uint32_t time_stamp) {
++                                            uint32_t time_stamp,
++                                            int device_id) {
+   gfx::Point position(x, y);
+   base::TimeTicks time_delta = ui::EventTimeForNow();
+   time_delta += base::TimeDelta::FromMilliseconds(time_stamp);
+   ui::TouchEvent touchev(type, position, touch_id, time_delta);
++  touchev.set_source_device_id(device_id);
+   DispatchEvent(&touchev);
+ }
+ 
+Index: chromium-53.0.2785.143/ozone/platform/window_manager_wayland.h
+===================================================================
+--- chromium-53.0.2785.143.orig/ozone/platform/window_manager_wayland.h
++++ chromium-53.0.2785.143/ozone/platform/window_manager_wayland.h
+@@ -6,6 +6,7 @@
+ #define OZONE_IMPL_PLATFORM_WINDOW_MANAGER_OZONE_H_
+ 
+ #include <list>
++#include <map>
+ #include <string>
+ #include <vector>
+ 
+@@ -29,7 +30,11 @@ class OzoneWaylandScreen;
+ namespace ui {
+ 
+ class OzoneGpuPlatformSupportHost;
++class OzoneWaylandSeat;
+ class OzoneWaylandWindow;
++struct PointerPosition;
++
++typedef std::map<std::string, OzoneWaylandSeat*> SeatMap;
+ 
+ // A static class used by OzoneWaylandWindow for basic window management.
+ class WindowManagerWayland
+@@ -60,9 +65,6 @@ class WindowManagerWayland
+   // Unsets a given widget as the recipient for events.
+   void UngrabEvents(gfx::AcceleratedWidget widget);
+ 
+-  // Gets the current widget recipient of mouse events.
+-  gfx::AcceleratedWidget event_grabber() const { return event_grabber_; }
+-
+  private:
+   void OnActivationChanged(unsigned windowhandle, bool active);
+   std::list<OzoneWaylandWindow*>& open_windows();
+@@ -83,27 +85,29 @@ class WindowManagerWayland
+       const base::Callback<void(IPC::Message*)>& send_callback) override;
+   void OnChannelDestroyed(int host_id) override;
+   bool OnMessageReceived(const IPC::Message&) override;
+-  void MotionNotify(float x, float y);
++  void MotionNotify(ui::PointerPosition position, int device_id);
+   void ButtonNotify(unsigned handle,
+                     EventType type,
+                     EventFlags flags,
+-                    float x,
+-                    float y);
+-  void AxisNotify(float x,
+-                  float y,
++                    ui::PointerPosition position,
++                    int device_id);
++  void AxisNotify(ui::PointerPosition position,
+                   int xoffset,
+-                  int yoffset);
++                  int yoffset,
++                  int device_id);
+   void PointerEnter(unsigned handle, float x, float y);
+   void PointerLeave(unsigned handle, float x, float y);
++  void KeyboardEnter(unsigned handle);
++  void KeyboardLeave(unsigned handle);
+   void KeyNotify(EventType type, unsigned code, int device_id);
+   void VirtualKeyNotify(EventType type,
+                         uint32_t key,
+                         int device_id);
+   void TouchNotify(EventType type,
+-                   float x,
+-                   float y,
++                   ui::PointerPosition position,
+                    int32_t touch_id,
+-                   uint32_t time_stamp);
++                   uint32_t time_stamp,
++                   int device_id);
+   void CloseWidget(unsigned handle);
+ 
+   void OutputSizeChanged(unsigned width, unsigned height);
+@@ -124,6 +128,11 @@ class WindowManagerWayland
+   void DragMotion(unsigned windowhandle, float x, float y, uint32_t time);
+   void DragDrop(unsigned windowhandle);
+ 
++  void SeatCreated(const std::string name,
++                   std::vector<uint32_t> device_ids);
++  void SeatAssignmentChanged(const std::string seat_name,
++                             unsigned windowhandle);
++
+   void InitializeXKB(base::SharedMemoryHandle fd, uint32_t size);
+   // PlatformEventSource:
+   void OnDispatcherListChanged() override;
+@@ -134,27 +143,33 @@ class WindowManagerWayland
+   void PostUiEvent(Event* event);
+ 
+   void NotifyMotion(float x,
+-                    float y);
++                    float y,
++                    int device_id);
+   void NotifyButtonPress(unsigned handle,
+                          EventType type,
+                          EventFlags flags,
+                          float x,
+-                         float y);
++                         float y,
++                         int device_id);
+   void NotifyAxis(float x,
+                   float y,
+                   int xoffset,
+-                  int yoffset);
++                  int yoffset,
++                  int device_id);
+   void NotifyPointerEnter(unsigned handle,
+                           float x,
+                           float y);
+   void NotifyPointerLeave(unsigned handle,
+                           float x,
+                           float y);
++  void NotifyKeyboardEnter(unsigned handle);
++  void NotifyKeyboardLeave(unsigned handle);
+   void NotifyTouchEvent(EventType type,
+                         float x,
+                         float y,
+                         int32_t touch_id,
+-                        uint32_t time_stamp);
++                        uint32_t time_stamp,
++                        int device_id);
+   void NotifyOutputSizeChanged(unsigned width,
+                                unsigned height);
+ 
+@@ -170,7 +185,7 @@ class WindowManagerWayland
+ 
+   // List of all open aura::Window.
+   std::list<OzoneWaylandWindow*>* open_windows_;
+-  gfx::AcceleratedWidget event_grabber_ = gfx::kNullAcceleratedWidget;
++  SeatMap seats_;
+   OzoneWaylandWindow* active_window_;
+   gfx::AcceleratedWidget current_capture_ = gfx::kNullAcceleratedWidget;
+   OzoneGpuPlatformSupportHost* proxy_;
+Index: chromium-53.0.2785.143/ozone/wayland/display.cc
+===================================================================
+--- chromium-53.0.2785.143.orig/ozone/wayland/display.cc
++++ chromium-53.0.2785.143/ozone/wayland/display.cc
+@@ -659,23 +659,25 @@ IPC::MessageFilter* WaylandDisplay::GetM
+   return NULL;
+ }
+ 
+-void WaylandDisplay::MotionNotify(float x, float y) {
+-  Dispatch(new WaylandInput_MotionNotify(x, y));
++void WaylandDisplay::MotionNotify(float x, float y, int device_id) {
++  Dispatch(new WaylandInput_MotionNotify(ui::PointerPosition(x, y), device_id));
+ }
+ 
+ void WaylandDisplay::ButtonNotify(unsigned handle,
+                                   ui::EventType type,
+                                   ui::EventFlags flags,
+                                   float x,
+-                                  float y) {
+-  Dispatch(new WaylandInput_ButtonNotify(handle, type, flags, x, y));
++                                  float y,
++                                  int device_id) {
++  Dispatch(new WaylandInput_ButtonNotify(handle, type, flags, ui::PointerPosition(x, y), device_id));
+ }
+ 
+ void WaylandDisplay::AxisNotify(float x,
+                                 float y,
+                                 int xoffset,
+-                                int yoffset) {
+-  Dispatch(new WaylandInput_AxisNotify(x, y, xoffset, yoffset));
++                                int yoffset,
++                                int device_id) {
++  Dispatch(new WaylandInput_AxisNotify(ui::PointerPosition(x, y), xoffset, yoffset, device_id));
+ }
+ 
+ void WaylandDisplay::PointerEnter(unsigned handle, float x, float y) {
+@@ -686,6 +688,14 @@ void WaylandDisplay::PointerLeave(unsign
+   Dispatch(new WaylandInput_PointerLeave(handle, x, y));
+ }
+ 
++void WaylandDisplay::KeyboardEnter(unsigned handle) {
++  Dispatch(new WaylandInput_KeyboardEnter(handle));
++}
++
++void WaylandDisplay::KeyboardLeave(unsigned handle) {
++  Dispatch(new WaylandInput_KeyboardLeave(handle));
++}
++
+ void WaylandDisplay::KeyNotify(ui::EventType type,
+                                unsigned code,
+                                int device_id) {
+@@ -702,8 +712,9 @@ void WaylandDisplay::TouchNotify(ui::Eve
+                                  float x,
+                                  float y,
+                                  int32_t touch_id,
+-                                 uint32_t time_stamp) {
+-  Dispatch(new WaylandInput_TouchNotify(type, x, y, touch_id, time_stamp));
++                                 uint32_t time_stamp,
++                                 int device_id) {
++  Dispatch(new WaylandInput_TouchNotify(type, ui::PointerPosition(x, y), touch_id, time_stamp, device_id));
+ }
+ 
+ void WaylandDisplay::OutputSizeChanged(unsigned width, unsigned height) {
+@@ -783,6 +794,16 @@ void WaylandDisplay::DragDrop(unsigned w
+   Dispatch(new WaylandInput_DragDrop(windowhandle));
+ }
+ 
++void WaylandDisplay::SeatCreated(const std::string name,
++                                 const std::vector<uint32_t> device_ids) {
++  Dispatch(new WaylandInput_SeatCreated(name, device_ids));
++}
++
++void WaylandDisplay::SeatAssignmentChanged(const std::string seat_name,
++                                           unsigned windowhandle) {
++  Dispatch(new WaylandInput_SeatAssignmentChanged(seat_name, windowhandle));
++}
++
+ void WaylandDisplay::Dispatch(IPC::Message* message) {
+   if (!loop_) {
+     deferred_messages_.push(message);
+Index: chromium-53.0.2785.143/ozone/wayland/display.h
+===================================================================
+--- chromium-53.0.2785.143.orig/ozone/wayland/display.h
++++ chromium-53.0.2785.143/ozone/wayland/display.h
+@@ -122,22 +122,26 @@ class WaylandDisplay : public ui::Surfac
+   std::unique_ptr<ui::SurfaceOzoneCanvas> CreateCanvasForWidget(
+       gfx::AcceleratedWidget widget) override;
+ 
+-  void MotionNotify(float x, float y);
++  void MotionNotify(float x, float y, int device_id);
+   void ButtonNotify(unsigned handle,
+                     ui::EventType type,
+                     ui::EventFlags flags,
+                     float x,
+-                    float y);
+-  void AxisNotify(float x, float y, int xoffset, int yoffset);
++                    float y,
++                    int device_id);
++  void AxisNotify(float x, float y, int xoffset, int yoffset, int device_id);
+   void PointerEnter(unsigned handle, float x, float y);
+   void PointerLeave(unsigned handle, float x, float y);
++  void KeyboardEnter(unsigned handle);
++  void KeyboardLeave(unsigned handle);
+   void KeyNotify(ui::EventType type, unsigned code, int device_id);
+   void VirtualKeyNotify(ui::EventType type, uint32_t key, int device_id);
+   void TouchNotify(ui::EventType type,
+                    float x,
+                    float y,
+                    int32_t touch_id,
+-                   uint32_t time_stamp);
++                   uint32_t time_stamp,
++                   int device_id);
+ 
+   void OutputSizeChanged(unsigned width, unsigned height);
+   void WindowResized(unsigned handle, unsigned width, unsigned height);
+@@ -164,6 +168,11 @@ class WaylandDisplay : public ui::Surfac
+   void DragMotion(unsigned windowhandle, float x, float y, uint32_t time);
+   void DragDrop(unsigned windowhandle);
+ 
++  void SeatCreated(const std::string name,
++                   const std::vector<uint32_t> device_ids);
++  void SeatAssignmentChanged(const std::string seat_name,
++                             unsigned windowhandle);
++
+ #if defined(ENABLE_DRM_SUPPORT)
+   // DRM related.
+   void DrmHandleDevice(const char*);
+Index: chromium-53.0.2785.143/ozone/wayland/input/keyboard.cc
+===================================================================
+--- chromium-53.0.2785.143.orig/ozone/wayland/input/keyboard.cc
++++ chromium-53.0.2785.143/ozone/wayland/input/keyboard.cc
+@@ -3,6 +3,9 @@
+ // found in the LICENSE file.
+ 
+ #include "ozone/wayland/input/keyboard.h"
++#include "ozone/wayland/seat.h"
++#include "ozone/wayland/shell/shell_surface.h"
++#include <string>
+ 
+ namespace ozonewayland {
+ 
+@@ -26,11 +29,13 @@ void WaylandKeyboard::OnSeatCapabilities
+ 
+   dispatcher_ =
+       WaylandDisplay::GetInstance();
++  seat_ = static_cast<WaylandSeat*>(wl_seat_get_user_data(seat));
+ 
+   if ((caps & WL_SEAT_CAPABILITY_KEYBOARD) && !input_keyboard_) {
+     input_keyboard_ = wl_seat_get_keyboard(seat);
+     wl_keyboard_add_listener(input_keyboard_, &kInputKeyboardListener,
+         this);
++    device_id_ = wl_proxy_get_id(reinterpret_cast<wl_proxy*>(input_keyboard_));
+   }
+ }
+ 
+@@ -41,6 +46,16 @@ void WaylandKeyboard::OnKeyNotify(void*
+                                   uint32_t key,
+                                   uint32_t state) {
+   WaylandKeyboard* device = static_cast<WaylandKeyboard*>(data);
++  WaylandSeat* seat = device->seat_;
++  WaylandWindow* window = WaylandDisplay::GetInstance()->GetWindow(seat->GetKeyboardFocusWindowHandle());
++  std::string seat_name = seat->GetName();
++  if (!window) {
++    LOG(ERROR) << "WaylandKeyboard::OnKeyNotify no focused window ";
++    return;
++  }
++  if (!window->ShellSurface()->CanAcceptSeatEvents(seat_name.c_str())) {
++    return;
++  }
+   ui::EventType type = ui::ET_KEY_PRESSED;
+   WaylandDisplay::GetInstance()->SetSerial(serial);
+   if (state == WL_KEYBOARD_KEY_STATE_RELEASED)
+@@ -77,6 +92,13 @@ void WaylandKeyboard::OnKeyboardEnter(vo
+                                       wl_surface* surface,
+                                       wl_array* keys) {
+   WaylandDisplay::GetInstance()->SetSerial(serial);
++  WaylandKeyboard* device = static_cast<WaylandKeyboard*>(data);
++  WaylandSeat* seat = device->seat_;
++  WaylandWindow* window =
++    static_cast<WaylandWindow*>(wl_surface_get_user_data(surface));
++  unsigned handle = window->Handle();
++  seat->SetKeyboardFocusWindowHandle(handle);
++  device->dispatcher_->KeyboardEnter(handle);
+ }
+ 
+ void WaylandKeyboard::OnKeyboardLeave(void* data,
+@@ -84,6 +106,13 @@ void WaylandKeyboard::OnKeyboardLeave(vo
+                                       uint32_t serial,
+                                       wl_surface* surface) {
+   WaylandDisplay::GetInstance()->SetSerial(serial);
++  WaylandKeyboard* device = static_cast<WaylandKeyboard*>(data);
++  WaylandSeat* seat = device->seat_;
++  WaylandWindow* window =
++    static_cast<WaylandWindow*>(wl_surface_get_user_data(surface));
++  unsigned handle = window->Handle();
++  seat->SetKeyboardFocusWindowHandle(0);
++  device->dispatcher_->KeyboardLeave(handle);
+ }
+ 
+ void WaylandKeyboard::OnKeyModifiers(void *data,
+Index: chromium-53.0.2785.143/ozone/wayland/input/keyboard.h
+===================================================================
+--- chromium-53.0.2785.143.orig/ozone/wayland/input/keyboard.h
++++ chromium-53.0.2785.143/ozone/wayland/input/keyboard.h
+@@ -15,6 +15,7 @@ class WaylandKeyboard {
+   ~WaylandKeyboard();
+ 
+   void OnSeatCapabilities(wl_seat *seat, uint32_t caps);
++  uint32_t GetDeviceId() { return device_id_; }
+ 
+  private:
+   static void OnKeyNotify(void* data,
+@@ -51,6 +52,8 @@ class WaylandKeyboard {
+ 
+   wl_keyboard* input_keyboard_;
+   WaylandDisplay* dispatcher_;
++  WaylandSeat* seat_;
++  uint32_t device_id_;
+ 
+   DISALLOW_COPY_AND_ASSIGN(WaylandKeyboard);
+ };
+Index: chromium-53.0.2785.143/ozone/wayland/input/pointer.cc
+===================================================================
+--- chromium-53.0.2785.143.orig/ozone/wayland/input/pointer.cc
++++ chromium-53.0.2785.143/ozone/wayland/input/pointer.cc
+@@ -9,6 +9,7 @@
+ #include "ozone/wayland/input/cursor.h"
+ #include "ozone/wayland/seat.h"
+ #include "ozone/wayland/window.h"
++#include "ozone/wayland/shell/shell_surface.h"
+ #include "ui/events/event.h"
+ 
+ namespace ozonewayland {
+@@ -39,12 +40,14 @@ void WaylandPointer::OnSeatCapabilities(
+     cursor_ = new WaylandCursor();
+ 
+   dispatcher_ = WaylandDisplay::GetInstance();
++  seat_ = static_cast<WaylandSeat*>(wl_seat_get_user_data(seat));
+ 
+   if ((caps & WL_SEAT_CAPABILITY_POINTER) && !cursor_->GetInputPointer()) {
+     input_pointer_ = wl_seat_get_pointer(seat);
+       cursor_->SetInputPointer(input_pointer_);
+     wl_pointer_set_user_data(input_pointer_, this);
+     wl_pointer_add_listener(input_pointer_, &kInputPointerListener, this);
++    device_id_ = wl_proxy_get_id(reinterpret_cast<wl_proxy*>(input_pointer_));
+   }
+ }
+ 
+@@ -54,7 +57,7 @@ void WaylandPointer::OnMotionNotify(void
+                                     wl_fixed_t sx_w,
+                                     wl_fixed_t sy_w) {
+   WaylandPointer* device = static_cast<WaylandPointer*>(data);
+-  WaylandSeat* seat = WaylandDisplay::GetInstance()->PrimarySeat();
++  WaylandSeat* seat = device->seat_;
+   float sx = wl_fixed_to_double(sx_w);
+   float sy = wl_fixed_to_double(sy_w);
+ 
+@@ -64,7 +67,7 @@ void WaylandPointer::OnMotionNotify(void
+       return;
+   }
+ 
+-  device->dispatcher_->MotionNotify(sx, sy);
++  device->dispatcher_->MotionNotify(sx, sy, device->device_id_);
+ }
+ 
+ void WaylandPointer::OnButtonNotify(void* data,
+@@ -75,7 +78,9 @@ void WaylandPointer::OnButtonNotify(void
+                                     uint32_t state) {
+   WaylandPointer* device = static_cast<WaylandPointer*>(data);
+   WaylandDisplay::GetInstance()->SetSerial(serial);
+-  WaylandSeat* seat = WaylandDisplay::GetInstance()->PrimarySeat();
++  WaylandSeat* seat = device->seat_;
++  WaylandWindow* window = WaylandDisplay::GetInstance()->GetWindow(seat->GetFocusWindowHandle());
++
+   if (seat->GetFocusWindowHandle() && seat->GetGrabButton() == 0 &&
+         state == WL_POINTER_BUTTON_STATE_PRESSED)
+     seat->SetGrabWindowHandle(seat->GetFocusWindowHandle(), button);
+@@ -98,7 +103,8 @@ void WaylandPointer::OnButtonNotify(void
+                                       type,
+                                       flags,
+                                       device->pointer_position_.x(),
+-                                      device->pointer_position_.y());
++                                      device->pointer_position_.y(),
++                                      device->device_id_);
+   }
+ 
+   if (seat->GetGrabWindowHandle() && seat->GetGrabButton() == button &&
+@@ -129,7 +135,8 @@ void WaylandPointer::OnAxisNotify(void*
+   device->dispatcher_->AxisNotify(device->pointer_position_.x(),
+                                   device->pointer_position_.y(),
+                                   x_offset,
+-                                  y_offset);
++                                  y_offset,
++                                  device->device_id_);
+ }
+ 
+ void WaylandPointer::OnPointerEnter(void* data,
+@@ -138,16 +145,19 @@ void WaylandPointer::OnPointerEnter(void
+                                     wl_surface* surface,
+                                     wl_fixed_t sx_w,
+                                     wl_fixed_t sy_w) {
+-  WaylandSeat* seat = WaylandDisplay::GetInstance()->PrimarySeat();
++  WaylandPointer* device = static_cast<WaylandPointer*>(data);
++  WaylandSeat* seat = device->seat_;
++  std::string seat_name = seat->GetName();
+ 
+   if (!surface) {
+     seat->SetFocusWindowHandle(0);
+     return;
+   }
+ 
+-  WaylandPointer* device = static_cast<WaylandPointer*>(data);
+   WaylandWindow* window =
+       static_cast<WaylandWindow*>(wl_surface_get_user_data(surface));
++  if (!window || !window->ShellSurface()->CanAcceptSeatEvents(seat_name.c_str()))
++      return;
+   unsigned handle = window->Handle();
+   float sx = wl_fixed_to_double(sx_w);
+   float sy = wl_fixed_to_double(sy_w);
+@@ -167,7 +177,7 @@ void WaylandPointer::OnPointerLeave(void
+   WaylandPointer* device = static_cast<WaylandPointer*>(data);
+   WaylandDisplay::GetInstance()->SetSerial(serial);
+ 
+-  WaylandSeat* seat = WaylandDisplay::GetInstance()->PrimarySeat();
++  WaylandSeat* seat = device->seat_;
+   device->dispatcher_->PointerLeave(seat->GetFocusWindowHandle(),
+                                     device->pointer_position_.x(),
+                                     device->pointer_position_.y());
+Index: chromium-53.0.2785.143/ozone/wayland/input/pointer.h
+===================================================================
+--- chromium-53.0.2785.143.orig/ozone/wayland/input/pointer.h
++++ chromium-53.0.2785.143/ozone/wayland/input/pointer.h
+@@ -20,6 +20,7 @@ class WaylandPointer {
+ 
+   void OnSeatCapabilities(wl_seat *seat, uint32_t caps);
+   WaylandCursor* Cursor() const { return cursor_; }
++  uint32_t GetDeviceId() { return device_id_; }
+ 
+  private:
+   static void OnMotionNotify(
+@@ -60,6 +61,9 @@ class WaylandPointer {
+ 
+   WaylandCursor* cursor_;
+   WaylandDisplay* dispatcher_;
++  WaylandSeat* seat_;
++  uint32_t device_id_;
++
+   // Keeps track of the last position for the motion event. We want to
+   // dispatch this with events such as wheel or button which don't have a
+   // position associated on Wayland.
+Index: chromium-53.0.2785.143/ozone/wayland/input/touchscreen.cc
+===================================================================
+--- chromium-53.0.2785.143.orig/ozone/wayland/input/touchscreen.cc
++++ chromium-53.0.2785.143/ozone/wayland/input/touchscreen.cc
+@@ -8,6 +8,7 @@
+ 
+ #include "ozone/wayland/input/cursor.h"
+ #include "ozone/wayland/seat.h"
++#include "ozone/wayland/shell/shell_surface.h"
+ #include "ozone/wayland/window.h"
+ #include "ui/events/event.h"
+ 
+@@ -17,6 +18,9 @@ WaylandTouchscreen::WaylandTouchscreen()
+   : dispatcher_(NULL),
+     pointer_position_(0, 0),
+     wl_touch_(NULL) {
++  static int32_t touch_point_base_id_static = 0;
++  touch_point_base_id_ = touch_point_base_id_static;
++  touch_point_base_id_static += 100;
+ }
+ 
+ WaylandTouchscreen::~WaylandTouchscreen() {
+@@ -34,11 +38,13 @@ void WaylandTouchscreen::OnSeatCapabilit
+   };
+ 
+   dispatcher_ = WaylandDisplay::GetInstance();
++  seat_ = static_cast<WaylandSeat*>(wl_seat_get_user_data(seat));
+ 
+   if ((caps & WL_SEAT_CAPABILITY_TOUCH)) {
+     wl_touch_ = wl_seat_get_touch(seat);
+     wl_touch_set_user_data(wl_touch_, this);
+     wl_touch_add_listener(wl_touch_, &kInputTouchListener, this);
++    device_id_ = wl_proxy_get_id(reinterpret_cast<wl_proxy*>(wl_touch_));
+   }
+ }
+ 
+@@ -52,7 +58,8 @@ void WaylandTouchscreen::OnTouchDown(voi
+                                      wl_fixed_t y) {
+   WaylandTouchscreen* device = static_cast<WaylandTouchscreen*>(data);
+   WaylandDisplay::GetInstance()->SetSerial(serial);
+-  WaylandSeat* seat = WaylandDisplay::GetInstance()->PrimarySeat();
++  WaylandSeat* seat = device->seat_;
++  std::string seat_name = seat->GetName();
+ 
+   // Need this code when the user clicks on a text input box directly
+   if (!seat->GetPointer()) {
+@@ -62,18 +69,28 @@ void WaylandTouchscreen::OnTouchDown(voi
+     }
+     WaylandWindow* window =
+          static_cast<WaylandWindow*>(wl_surface_get_user_data(surface));
++    if (!window->ShellSurface()->CanAcceptSeatEvents(seat_name.c_str())) {
++      return;
++    }
+     seat->SetFocusWindowHandle(window->Handle());
+   }
++  else {
++    WaylandWindow* window = WaylandDisplay::GetInstance()->GetWindow(seat->GetFocusWindowHandle());
++    if (!window || !window->ShellSurface()->CanAcceptSeatEvents(seat_name.c_str())) {
++      return;
++    }
++  }
+ 
+   if (seat->GetFocusWindowHandle() && seat->GetGrabButton() == 0)
+     seat->SetGrabWindowHandle(seat->GetFocusWindowHandle(), id);
+ 
+   float sx = wl_fixed_to_double(x);
+   float sy = wl_fixed_to_double(y);
++  uint32_t touch_point_id = id + device->touch_point_base_id_;
+ 
+   device->pointer_position_.SetPoint(sx, sy);
+ 
+-  device->dispatcher_->TouchNotify(ui::ET_TOUCH_PRESSED, sx, sy, id, time);
++  device->dispatcher_->TouchNotify(ui::ET_TOUCH_PRESSED, sx, sy, touch_point_id, time, device->device_id_);
+ }
+ 
+ void WaylandTouchscreen::OnTouchUp(void *data,
+@@ -83,11 +100,13 @@ void WaylandTouchscreen::OnTouchUp(void
+                                    int32_t id) {
+   WaylandTouchscreen* device = static_cast<WaylandTouchscreen*>(data);
+   WaylandDisplay::GetInstance()->SetSerial(serial);
+-  WaylandSeat* seat = WaylandDisplay::GetInstance()->PrimarySeat();
++  WaylandSeat* seat = device->seat_;
++  uint32_t touch_point_id = id + device->touch_point_base_id_;
+ 
+   device->dispatcher_->TouchNotify(ui::ET_TOUCH_RELEASED,
+                                    device->pointer_position_.x(),
+-                                   device->pointer_position_.y(), id, time);
++                                   device->pointer_position_.y(),
++                                   touch_point_id, time, device->device_id_);
+ 
+   if (seat->GetGrabWindowHandle() && seat->GetGrabButton() == id)
+     seat->SetGrabWindowHandle(0, 0);
+@@ -100,9 +119,10 @@ void WaylandTouchscreen::OnTouchMotion(v
+                                       wl_fixed_t x,
+                                       wl_fixed_t y) {
+   WaylandTouchscreen* device = static_cast<WaylandTouchscreen*>(data);
+-  WaylandSeat* seat = WaylandDisplay::GetInstance()->PrimarySeat();
++  WaylandSeat* seat = device->seat_;
+   float sx = wl_fixed_to_double(x);
+   float sy = wl_fixed_to_double(y);
++  uint32_t touch_point_id = id + device->touch_point_base_id_;
+ 
+   device->pointer_position_.SetPoint(sx, sy);
+ 
+@@ -111,7 +131,7 @@ void WaylandTouchscreen::OnTouchMotion(v
+     return;
+   }
+ 
+-  device->dispatcher_->TouchNotify(ui::ET_TOUCH_MOVED, sx, sy, id, time);
++  device->dispatcher_->TouchNotify(ui::ET_TOUCH_MOVED, sx, sy, touch_point_id, time, device->device_id_);
+ }
+ 
+ void WaylandTouchscreen::OnTouchFrame(void *data,
+@@ -122,13 +142,13 @@ void WaylandTouchscreen::OnTouchFrame(vo
+ void WaylandTouchscreen::OnTouchCancel(void *data,
+                                        struct wl_touch *wl_touch) {
+   WaylandTouchscreen* device = static_cast<WaylandTouchscreen*>(data);
+-  WaylandSeat* seat = WaylandDisplay::GetInstance()->PrimarySeat();
++  WaylandSeat* seat = device->seat_;
+ 
+   device->dispatcher_->TouchNotify(ui::ET_TOUCH_CANCELLED,
+                                    device->pointer_position_.x(),
+                                    device->pointer_position_.y(),
+                                    seat->GetGrabButton(),
+-                                   0);
++                                   0, device->device_id_);
+ 
+   if (seat->GetGrabWindowHandle() && seat->GetGrabButton() != 0)
+     seat->SetGrabWindowHandle(0, 0);
+Index: chromium-53.0.2785.143/ozone/wayland/input/touchscreen.h
+===================================================================
+--- chromium-53.0.2785.143.orig/ozone/wayland/input/touchscreen.h
++++ chromium-53.0.2785.143/ozone/wayland/input/touchscreen.h
+@@ -18,6 +18,7 @@ class WaylandTouchscreen {
+   ~WaylandTouchscreen();
+ 
+   void OnSeatCapabilities(wl_seat *seat, uint32_t caps);
++  uint32_t GetDeviceId() { return device_id_; }
+ 
+  private:
+   static void OnTouchDown(
+@@ -56,6 +57,9 @@ class WaylandTouchscreen {
+   WaylandDisplay* dispatcher_;
+   gfx::Point pointer_position_;
+   struct wl_touch* wl_touch_;
++  WaylandSeat* seat_;
++  uint32_t device_id_;
++  int32_t touch_point_base_id_;
+ 
+   DISALLOW_COPY_AND_ASSIGN(WaylandTouchscreen);
+ };
+Index: chromium-53.0.2785.143/ozone/wayland/seat.cc
+===================================================================
+--- chromium-53.0.2785.143.orig/ozone/wayland/seat.cc
++++ chromium-53.0.2785.143/ozone/wayland/seat.cc
+@@ -19,6 +19,7 @@ namespace ozonewayland {
+ WaylandSeat::WaylandSeat(WaylandDisplay* display,
+                          uint32_t id)
+     : focused_window_handle_(0),
++      keyboard_focused_window_handle_(0),
+       grab_window_handle_(0),
+       grab_button_(0),
+       seat_(NULL),
+@@ -28,10 +29,11 @@ WaylandSeat::WaylandSeat(WaylandDisplay*
+       text_input_(NULL) {
+   static const struct wl_seat_listener kInputSeatListener = {
+     WaylandSeat::OnSeatCapabilities,
++    WaylandSeat::OnSeatName,
+   };
+ 
+   seat_ = static_cast<wl_seat*>(
+-      wl_registry_bind(display->registry(), id, &wl_seat_interface, 1));
++      wl_registry_bind(display->registry(), id, &wl_seat_interface, 2));
+   DCHECK(seat_);
+   wl_seat_add_listener(seat_, &kInputSeatListener, this);
+   wl_seat_set_user_data(seat_, this);
+@@ -78,8 +80,27 @@ void WaylandSeat::OnSeatCapabilities(voi
+   }
+ }
+ 
++void WaylandSeat::OnSeatName(void *data, wl_seat *seat, const char *name) {
++  WaylandSeat* device = static_cast<WaylandSeat*>(data);
++  device->name_ = std::string(name);
++
++  std::vector<uint32_t> device_ids;
++  if (device->input_touch_)
++    device_ids.push_back(device->input_touch_->GetDeviceId());
++  if (device->input_keyboard_)
++    device_ids.push_back(device->input_keyboard_->GetDeviceId());
++  if (device->input_pointer_)
++    device_ids.push_back(device->input_pointer_->GetDeviceId());
++
++  WaylandDisplay::GetInstance()->SeatCreated(device->name_, device_ids);
++}
++
+ void WaylandSeat::SetFocusWindowHandle(unsigned windowhandle) {
+   focused_window_handle_ = windowhandle;
++}
++
++void WaylandSeat::SetKeyboardFocusWindowHandle(unsigned windowhandle) {
++  keyboard_focused_window_handle_ = windowhandle;
+   WaylandWindow* window = NULL;
+   if (windowhandle)
+     window = WaylandDisplay::GetInstance()->GetWindow(windowhandle);
+Index: chromium-53.0.2785.143/ozone/wayland/seat.h
+===================================================================
+--- chromium-53.0.2785.143.orig/ozone/wayland/seat.h
++++ chromium-53.0.2785.143/ozone/wayland/seat.h
+@@ -7,6 +7,7 @@
+ 
+ #include <wayland-client.h>
+ #include <vector>
++#include <string>
+ 
+ #include "base/macros.h"
+ #include "third_party/skia/include/core/SkBitmap.h"
+@@ -31,9 +32,12 @@ class WaylandSeat {
+   WaylandKeyboard* GetKeyBoard() const { return input_keyboard_; }
+   WaylandPointer* GetPointer() const { return input_pointer_; }
+   unsigned GetFocusWindowHandle() const { return focused_window_handle_; }
++  unsigned GetKeyboardFocusWindowHandle() const { return keyboard_focused_window_handle_; }
+   unsigned GetGrabWindowHandle() const { return grab_window_handle_; }
+   uint32_t GetGrabButton() const { return grab_button_; }
++  std::string GetName() const { return name_; }
+   void SetFocusWindowHandle(unsigned windowhandle);
++  void SetKeyboardFocusWindowHandle(unsigned windowhandle);
+   void SetGrabWindowHandle(unsigned windowhandle, uint32_t button);
+   void SetCursorBitmap(const std::vector<SkBitmap>& bitmaps,
+                        const gfx::Point& location);
+@@ -48,12 +52,15 @@ class WaylandSeat {
+   static void OnSeatCapabilities(void *data,
+                                  wl_seat *seat,
+                                  uint32_t caps);
++  static void OnSeatName(void *data, wl_seat *seat, const char *name);
+ 
+   // Keeps track of current focused window.
+   unsigned focused_window_handle_;
++  unsigned keyboard_focused_window_handle_;
+   unsigned grab_window_handle_;
+   uint32_t grab_button_;
+   struct wl_seat* seat_;
++  std::string name_;
+   WaylandDataDevice* data_device_;
+   WaylandKeyboard* input_keyboard_;
+   WaylandPointer* input_pointer_;
+Index: chromium-53.0.2785.143/ozone/wayland/shell/ivi_shell_surface.cc
+===================================================================
+--- chromium-53.0.2785.143.orig/ozone/wayland/shell/ivi_shell_surface.cc
++++ chromium-53.0.2785.143/ozone/wayland/shell/ivi_shell_surface.cc
+@@ -10,6 +10,10 @@
+ #include "ozone/wayland/display.h"
+ #include "ozone/wayland/protocol/ivi-application-client-protocol.h"
+ #include "ozone/wayland/shell/shell.h"
++
++#include "ilm/ilm_common.h"
++#include "ilm/ilm_input.h"
++
+ #define IVI_SURFACE_ID 7000
+ 
+ namespace ozonewayland {
+@@ -43,6 +47,15 @@ void IVIShellSurface::InitializeShellSur
+   last_ivi_surface_id_ = ivi_surface_id_;
+ 
+   DCHECK(ivi_surface_);
++
++  window_handle_ = window->Handle();
++
++  ilmErrorTypes ret_code = ilm_init();
++  const char* error_msg;
++  if (ret_code != ILM_SUCCESS) {
++    error_msg = ILM_ERROR_STRING(ret_code);
++    LOG(ERROR) << error_msg;
++  }
+ }
+ 
+ void IVIShellSurface::UpdateShellSurface(WaylandWindow::ShellType type,
+@@ -68,5 +81,30 @@ bool IVIShellSurface::IsMinimized() cons
+   return false;
+ }
+ 
++bool IVIShellSurface::CanAcceptSeatEvents(const char* seat_name) {
++  WaylandDisplay* display = WaylandDisplay::GetInstance();
++
++  t_ilm_uint num_seats;
++  t_ilm_string *seats = NULL;
++  const char* error_msg;
++  bool found = false;
++
++  ilmErrorTypes ret_code = ilm_getInputAcceptanceOn(ivi_surface_id_, &num_seats, &seats);
++  if (ret_code == ILM_SUCCESS) {
++    for (int i = 0; i < num_seats; ++i) {
++      if (strcmp(reinterpret_cast<const char*>(seats[i]), seat_name) == 0) {
++        display->SeatAssignmentChanged(seat_name, window_handle_);
++        found = true;
++      }
++      free(seats[i]);
++    }
++  }
++  else {
++    error_msg = ILM_ERROR_STRING(ret_code);
++    LOG(ERROR) << error_msg;
++  }
++  free(seats);
++  return found;
++}
+ 
+ }  // namespace ozonewayland
+Index: chromium-53.0.2785.143/ozone/wayland/shell/ivi_shell_surface.h
+===================================================================
+--- chromium-53.0.2785.143.orig/ozone/wayland/shell/ivi_shell_surface.h
++++ chromium-53.0.2785.143/ozone/wayland/shell/ivi_shell_surface.h
+@@ -30,11 +30,13 @@ class IVIShellSurface : public WaylandSh
+   void Minimize() override;
+   void Unminimize() override;
+   bool IsMinimized() const override;
++  bool CanAcceptSeatEvents(const char* seat_name) override;
+ 
+  private:
+   ivi_surface* ivi_surface_;
+   int ivi_surface_id_;
+   static int last_ivi_surface_id_;
++  unsigned window_handle_;
+   DISALLOW_COPY_AND_ASSIGN(IVIShellSurface);
+ };
+ 
+Index: chromium-53.0.2785.143/ozone/wayland/shell/shell_surface.h
+===================================================================
+--- chromium-53.0.2785.143.orig/ozone/wayland/shell/shell_surface.h
++++ chromium-53.0.2785.143/ozone/wayland/shell/shell_surface.h
+@@ -34,6 +34,7 @@ class WaylandShellSurface {
+   virtual void Minimize() = 0;
+   virtual void Unminimize() = 0;
+   virtual bool IsMinimized() const = 0;
++  virtual bool CanAcceptSeatEvents(const char* seat_name) = 0;
+ 
+   // static functions.
+   static void PopupDone();
+Index: chromium-53.0.2785.143/ozone/wayland/shell/wl_shell_surface.cc
+===================================================================
+--- chromium-53.0.2785.143.orig/ozone/wayland/shell/wl_shell_surface.cc
++++ chromium-53.0.2785.143/ozone/wayland/shell/wl_shell_surface.cc
+@@ -102,6 +102,10 @@ bool WLShellSurface::IsMinimized() const
+   return false;
+ }
+ 
++bool WLShellSurface::CanAcceptSeatEvents(const char* seat_name) {
++  return true;
++}
++
+ void WLShellSurface::HandleConfigure(void* data,
+                                      struct wl_shell_surface* surface,
+                                      uint32_t edges,
+Index: chromium-53.0.2785.143/ozone/wayland/shell/wl_shell_surface.h
+===================================================================
+--- chromium-53.0.2785.143.orig/ozone/wayland/shell/wl_shell_surface.h
++++ chromium-53.0.2785.143/ozone/wayland/shell/wl_shell_surface.h
+@@ -28,6 +28,7 @@ class WLShellSurface : public WaylandShe
+   void Minimize() override;
+   void Unminimize() override;
+   bool IsMinimized() const override;
++  bool CanAcceptSeatEvents(const char* seat_name) override;
+ 
+   static void HandleConfigure(void* data,
+                               struct wl_shell_surface* shell_surface,
+Index: chromium-53.0.2785.143/ozone/wayland/shell/xdg_shell_surface.cc
+===================================================================
+--- chromium-53.0.2785.143.orig/ozone/wayland/shell/xdg_shell_surface.cc
++++ chromium-53.0.2785.143/ozone/wayland/shell/xdg_shell_surface.cc
+@@ -127,6 +127,10 @@ bool XDGShellSurface::IsMinimized() cons
+   return minimized_;
+ }
+ 
++bool XDGShellSurface::CanAcceptSeatEvents(const char* seat_name) {
++  return true;
++}
++  
+ void XDGShellSurface::HandleConfigure(void* data,
+                                       struct xdg_surface* xdg_surface,
+                                       int32_t width,
+Index: chromium-53.0.2785.143/ozone/wayland/shell/xdg_shell_surface.h
+===================================================================
+--- chromium-53.0.2785.143.orig/ozone/wayland/shell/xdg_shell_surface.h
++++ chromium-53.0.2785.143/ozone/wayland/shell/xdg_shell_surface.h
+@@ -31,6 +31,7 @@ class XDGShellSurface : public WaylandSh
+   void Minimize() override;
+   void Unminimize() override;
+   bool IsMinimized() const override;
++  bool CanAcceptSeatEvents(const char* seat_name) override;
+ 
+   static void HandleConfigure(void* data,
+                               struct xdg_surface* xdg_surface,
+Index: chromium-53.0.2785.143/ozone/wayland/wayland.gyp
+===================================================================
+--- chromium-53.0.2785.143.orig/ozone/wayland/wayland.gyp
++++ chromium-53.0.2785.143/ozone/wayland/wayland.gyp
+@@ -5,6 +5,10 @@
+ 
+ {
+   'variables': {
++    'variables': {
++      'enable_drm_support%': 0,
++    },
++    'enable_drm_support%': '<(enable_drm_support)',
+     'conditions': [
+       ['sysroot!=""', {
+         'pkg-config': '../../build/linux/pkg-config-wrapper "<(sysroot)" "<(target_arch)"',
+@@ -38,14 +42,18 @@
+       'direct_dependent_settings': {
+         'cflags': [
+           '<!@(<(pkg-config) --cflags <(wayland_packages))',
++          '<!@(<(pkg-config) --cflags gbm)',
+         ],
+       },
+       'link_settings': {
+         'ldflags': [
+           '<!@(<(pkg-config) --libs-only-L --libs-only-other <(wayland_packages))',
++          '<!@(<(pkg-config) --libs-only-L --libs-only-other gbm)',
+         ],
+         'libraries': [
+           '<!@(<(pkg-config) --libs-only-l <(wayland_packages))',
++          '<!@(<(pkg-config) --libs-only-l gbm)',
++          '-lilmInput -lilmCommon',
+         ],
+       },
+       'dependencies': [
+@@ -58,6 +66,19 @@
+         '../..',
+         '<(DEPTH)/third_party/khronos',
+       ],
++      'conditions': [
++        ['<(enable_drm_support)==1', {
++          'defines': [
++          'ENABLE_DRM_SUPPORT',
++          ],
++          'sources': [
++            'egl/wayland_pixmap.cc',
++            'egl/wayland_pixmap.h',
++            'protocol/wayland-drm-protocol.cc',
++            'protocol/wayland-drm-protocol.h',
++          ],
++        }],
++      ],
+       'sources': [
+         'data_device.cc',
+         'data_device.h',
