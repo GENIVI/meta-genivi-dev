@@ -4,6 +4,7 @@ DEPENDS += "mesa"
 DEPENDS_append_rcar-gen3 = " libgbm"
 
 SRC_URI += "\
+    file://0001-Multi-seat-implementation.patch \
     file://0001-seccomp-bpf-Allow-MADV_FREE-in-madvise-2.patch \
     file://google-chrome.desktop \
 "
@@ -28,7 +29,7 @@ COMPATIBLE_MACHINE_armv7ve = "(.*)"
 
 # Renesas workarounds
 
-COMPATIBLE_MACHINE_m3ulcb = "(.*)"
+COMPATIBLE_MACHINE_rcar-gen3 = "(.*)"
 
 # Apply same TUNE_FEATURES as in an armv7a build
 ARMFPABI_armv7ve = "${@bb.utils.contains('TUNE_FEATURES', 'callconvention-hard', 'arm_float_abi=hard', 'arm_float_abi=softfp', d)}"
