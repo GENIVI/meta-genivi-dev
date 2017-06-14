@@ -1,3 +1,0 @@
-[Unit]
-Description=Responsible for starting GENIVI components directly being used for the user context.
-After=basic.target

@@ -1,3 +1,0 @@
-[Unit]
-Description=Contains all applications in the system.
-After=focused.target

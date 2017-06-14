@@ -1,3 +1,0 @@
-[Unit]
-Description=Responsible for starting lazy background applications.
-After=unfocused.target
